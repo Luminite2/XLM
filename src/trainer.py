@@ -121,7 +121,8 @@ class Trainer(object):
             [('PC-%s-%s' % (l1, l2), []) for l1, l2 in params.pc_steps] +
             [('AE-%s' % lang, []) for lang in params.ae_steps] +
             [('MT-%s-%s' % (l1, l2), []) for l1, l2 in params.mt_steps] +
-            [('BT-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps]
+            [('BT-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps] +
+            [('RTTAE-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps]
         )
         self.last_time = time.time()
 
@@ -415,9 +416,11 @@ class Trainer(object):
         """
         Add noise to the encoder input.
         """
+        logger.debug('Before noise: {}, {}'.format(words, lengths))
         words, lengths = self.word_shuffle(words, lengths)
         words, lengths = self.word_dropout(words, lengths)
         words, lengths = self.word_blank(words, lengths)
+        logger.debug('After noise: {}, {}'.format(words, lengths))
         return words, lengths
 
     def mask_out(self, x, lengths):
@@ -832,7 +835,7 @@ class EncDecTrainer(Trainer):
         if lang1 == lang2:
             (x1, len1) = self.get_batch('ae', lang1)
             (x2, len2) = (x1, len1)
-            (x1, len1) = self.add_noise(x1, len1)
+            (x1, len1) = self.add_noise(x1, len1) #TODO(pr): think of a way to swap this out with RTT noise
         else:
             (x1, len1), (x2, len2) = self.get_batch('mt', lang1, lang2)
         langs1 = x1.clone().fill_(lang1_id)
@@ -867,7 +870,7 @@ class EncDecTrainer(Trainer):
         self.stats['processed_s'] += len2.size(0)
         self.stats['processed_w'] += (len2 - 1).sum().item()
 
-    def bt_step(self, lang1, lang2, lang3, lambda_coeff):
+    def bt_step(self, lang1, lang2, lang3, lambda_coeff, enable_rttae):
         """
         Back-translation step for machine translation.
         """
@@ -902,8 +905,29 @@ class EncDecTrainer(Trainer):
             x2, len2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
             langs2 = x2.clone().fill_(lang2_id)
 
+
+            #TODO(pr): either complete the round-trip and dump, or just dump the FT and BT it in AE section
+            #TODO(pr): figure out caching scheme. is the En AE used in the same batch that the En BT is?
+            #Looks like both languages AE's happen, then both languages' BT's (meaning first it should do normal, then laters can use RTTs)
+            #HOWEVER!!!!!: I suspect that the data will be different, so we can't just use a blind indexing scheme...
+            #We could hack it into the bt step to ensure data availability, or find a unique ID scheme and dump 5M RTT's sentences to disk
+              #Let's hack it in!
+            #Note that you should implement this in a way that lets you do both normal AE and RTT-AE (if hacked into BT, this is easy)
+
+            #TODO(pr): still in nograd, get the reverse encoder/decoder (are they the same???), and complete the round-trip
+            #Then, with gradients restored, copy-pasta or reuse what happens in mt_step (ae mode)
+
+
             # free CUDA memory
             del enc1
+
+            enc_rtt1 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+            enc_rtt1 = enc_rtt1.transpose(0, 1)
+
+            x3, len3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
+            langs3 = x3.clone().fill_(lang1_id)
+
+            del enc_rtt1
 
             # training mode
             self.encoder.train()
@@ -915,7 +939,7 @@ class EncDecTrainer(Trainer):
 
         # words to predict
         alen = torch.arange(len1.max(), dtype=torch.long, device=len1.device)
-        pred_mask = alen[:, None] < len1[None] - 1  # do not predict anything given the last target word
+        pred_mask = alen[:, None] < len1[None] - 1  # do not predict anything given the last target word #TODO(pr): figure this out; need to change if reusing for RTT?
         y1 = x1[1:].masked_select(pred_mask[:-1])
 
         # decode original sentence
@@ -932,3 +956,17 @@ class EncDecTrainer(Trainer):
         self.n_sentences += params.batch_size
         self.stats['processed_s'] += len1.size(0)
         self.stats['processed_w'] += (len1 - 1).sum().item()
+
+        #TODO(pr): RTTs are available here
+        if enable_rttae: #TODO(pr): replace with whatever controls whether to do RTT-AE
+
+          enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False) #TODO(pr): not 100% sure on 'fwd' bit
+          enc_rtt2 = enc_rtt2.transpose(0, 1)
+          #(MAKE SURE alen stuff is good)
+          dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3
+          _, loss_rtt = self.decoder('predict', tensor=dec_rtt, pred_mask=pred_mask, y=y1, get_scores=False)
+          self.stats[('RTTAE-%s-%s-%s' % (lang1, lang2, lang3))].append(loss_rtt.item()) #TODO(pr): make sure stats entry exists
+          self.optimize(loss_rtt)
+          self.n_sentences += params.batch_size #TODO(pr): determine whether it makes sense to track these 3 things for same sents
+          self.stats['processed_s'] += len1.size(0)
+

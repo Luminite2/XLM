@@ -175,6 +175,8 @@ def get_parser():
                         help="Back-translation steps")
     parser.add_argument("--pc_steps", type=str, default="",
                         help="Parallel classification steps")
+    parser.add_argument("--rttae", action="store_true",
+                        help="Enable round-trip translation auto-encoding with bt steps")
 
     # reload pretrained embeddings / pretrained model / checkpoint
     parser.add_argument("--reload_emb", type=str, default="",
@@ -285,7 +287,7 @@ def main(params):
 
             # back-translation steps
             for lang1, lang2, lang3 in shuf_order(params.bt_steps):
-                trainer.bt_step(lang1, lang2, lang3, params.lambda_bt)
+                trainer.bt_step(lang1, lang2, lang3, params.lambda_bt, params.rttae)
 
             trainer.iter()
 
