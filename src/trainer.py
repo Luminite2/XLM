@@ -122,7 +122,7 @@ class Trainer(object):
             [('AE-%s' % lang, []) for lang in params.ae_steps] +
             [('MT-%s-%s' % (l1, l2), []) for l1, l2 in params.mt_steps] +
             [('BT-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps] +
-            [('RTTAE-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps]
+            [('RTTAE-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps if params.rttae]
         )
         self.last_time = time.time()
 
@@ -416,11 +416,9 @@ class Trainer(object):
         """
         Add noise to the encoder input.
         """
-        logger.debug('Before noise: {}, {}'.format(words, lengths))
         words, lengths = self.word_shuffle(words, lengths)
         words, lengths = self.word_dropout(words, lengths)
         words, lengths = self.word_blank(words, lengths)
-        logger.debug('After noise: {}, {}'.format(words, lengths))
         return words, lengths
 
     def mask_out(self, x, lengths):
@@ -963,7 +961,7 @@ class EncDecTrainer(Trainer):
           enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False) #TODO(pr): not 100% sure on 'fwd' bit
           enc_rtt2 = enc_rtt2.transpose(0, 1)
           #(MAKE SURE alen stuff is good)
-          dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3
+          dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3)
           _, loss_rtt = self.decoder('predict', tensor=dec_rtt, pred_mask=pred_mask, y=y1, get_scores=False)
           self.stats[('RTTAE-%s-%s-%s' % (lang1, lang2, lang3))].append(loss_rtt.item()) #TODO(pr): make sure stats entry exists
           self.optimize(loss_rtt)
