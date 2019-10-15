@@ -217,7 +217,7 @@ for FILENAME in $SRC/news*gz $TGT/news*gz; do
   OUTPUT="${FILENAME::-3}"
   if [ ! -f "$OUTPUT" ]; then
     echo "Decompressing $FILENAME..."
-    gunzip $FILENAME
+    gunzip -c $FILENAME > $OUTPUT
   else
     echo "$OUTPUT already decompressed."
   fi
