@@ -903,19 +903,6 @@ class EncDecTrainer(Trainer):
             x2, len2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
             langs2 = x2.clone().fill_(lang2_id)
 
-
-            #TODO(pr): either complete the round-trip and dump, or just dump the FT and BT it in AE section
-            #TODO(pr): figure out caching scheme. is the En AE used in the same batch that the En BT is?
-            #Looks like both languages AE's happen, then both languages' BT's (meaning first it should do normal, then laters can use RTTs)
-            #HOWEVER!!!!!: I suspect that the data will be different, so we can't just use a blind indexing scheme...
-            #We could hack it into the bt step to ensure data availability, or find a unique ID scheme and dump 5M RTT's sentences to disk
-              #Let's hack it in!
-            #Note that you should implement this in a way that lets you do both normal AE and RTT-AE (if hacked into BT, this is easy)
-
-            #TODO(pr): still in nograd, get the reverse encoder/decoder (are they the same???), and complete the round-trip
-            #Then, with gradients restored, copy-pasta or reuse what happens in mt_step (ae mode)
-
-
             # free CUDA memory
             del enc1
 
@@ -967,4 +954,78 @@ class EncDecTrainer(Trainer):
           self.optimize(loss_rtt)
           self.n_sentences += params.batch_size #TODO(pr): determine whether it makes sense to track these 3 things for same sents
           self.stats['processed_s'] += len1.size(0)
+          #TODO(pr): processed_w too?
+          self.stats['processed_w'] += (len1 - 1).sum().item()
 
+    def rtt_step(self, lang1, lang2, lang3, lambda_coeff, enable_rttae):
+        """
+        Round-trip translation step for machine translation.
+        """
+        assert lambda_coeff >= 0
+        if lambda_coeff == 0:
+            return
+        assert lang1 == lang3 and lang1 != lang2 and lang2 is not None
+        params = self.params
+        _encoder = self.encoder.module if params.multi_gpu else self.encoder
+        _decoder = self.decoder.module if params.multi_gpu else self.decoder
+
+        lang1_id = params.lang2id[lang1]
+        lang2_id = params.lang2id[lang2]
+
+        # generate source batch
+        x1, len1 = self.get_batch('rtt', lang1)
+        langs1 = x1.clone().fill_(lang1_id)
+
+        # cuda
+        x1, len1, langs1 = to_cuda(x1, len1, langs1)
+
+        # generate a round-trip translation
+        with torch.no_grad():
+
+            # evaluation mode
+            self.encoder.eval()
+            self.decoder.eval()
+
+            # encode source sentence and translate it
+            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            enc1 = enc1.transpose(0, 1)
+            x2, len2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
+            langs2 = x2.clone().fill_(lang2_id)
+
+            # free CUDA memory
+            del enc1
+
+            #enc_rtt1 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+            enc_rtt1 = _encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+            enc_rtt1 = enc_rtt1.transpose(0, 1)
+
+            x3, len3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
+            langs3 = x3.clone().fill_(lang1_id)
+
+            del enc_rtt1
+
+            # training mode
+            self.encoder.train()
+            self.decoder.train()
+
+        # encode generate sentence
+        enc2 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+        enc2 = enc2.transpose(0, 1)
+
+        # words to predict
+        alen = torch.arange(len1.max(), dtype=torch.long, device=len1.device)
+        pred_mask = alen[:, None] < len1[None] - 1  # do not predict anything given the last target word #TODO(pr): figure this out; need to change if reusing for RTT?
+        y1 = x1[1:].masked_select(pred_mask[:-1])
+
+        enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False) #TODO(pr): not 100% sure on 'fwd' bit
+        enc_rtt2 = enc_rtt2.transpose(0, 1)
+        #(MAKE SURE alen stuff is good)
+        dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3)
+        _, loss_rtt = self.decoder('predict', tensor=dec_rtt, pred_mask=pred_mask, y=y1, get_scores=False)
+        self.stats[('RTTAEsep-%s-%s-%s' % (lang1, lang2, lang3))].append(loss_rtt.item()) #TODO(pr): make sure stats entry exists
+        self.optimize(loss_rtt)
+
+        # number of processed sentences / words
+        self.n_sentences += params.batch_size
+        self.stats['processed_s'] += len1.size(0)
+        self.stats['processed_w'] += (len1 - 1).sum().item()

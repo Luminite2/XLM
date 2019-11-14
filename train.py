@@ -161,6 +161,8 @@ def get_parser():
                         help="MT coefficient")
     parser.add_argument("--lambda_bt", type=str, default="1",
                         help="BT coefficient")
+    parser.add_argument("--lambda_rtt", type=str, default="1",
+                        help="RTT coefficient")
 
     # training steps
     parser.add_argument("--clm_steps", type=str, default="",
@@ -173,10 +175,14 @@ def get_parser():
                         help="Denoising auto-encoder steps")
     parser.add_argument("--bt_steps", type=str, default="",
                         help="Back-translation steps")
+    parser.add_argument("--rtt_steps", type=str, default="",
+                        help="Round-trip translation steps")
     parser.add_argument("--pc_steps", type=str, default="",
                         help="Parallel classification steps")
     parser.add_argument("--rttae", action="store_true",
                         help="Enable round-trip translation auto-encoding with bt steps")
+    parser.add_argument("--rttae_delay", type=int, default=-1,
+                        help="Don't enable the rttae objective until this many epochs have passed")
 
     # reload pretrained embeddings / pretrained model / checkpoint
     parser.add_argument("--reload_emb", type=str, default="",
@@ -287,7 +293,11 @@ def main(params):
 
             # back-translation steps
             for lang1, lang2, lang3 in shuf_order(params.bt_steps):
-                trainer.bt_step(lang1, lang2, lang3, params.lambda_bt, params.rttae)
+                trainer.bt_step(lang1, lang2, lang3, params.lambda_bt, params.rttae and trainer.epoch > params.rttae_delay)
+
+            # rtt steps (ALPHA)
+            for lang1, lang2, lang3 in shuf_order(params.rtt_steps):
+                trainer.rtt_step(lang1, lang2, lang3, params.lambda_rtt)
 
             trainer.iter()
 
