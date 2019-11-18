@@ -138,7 +138,7 @@ def load_mono_data(params, data):
                 data['mono_stream'][lang][splt].select_data(a, b)
 
             # for denoising auto-encoding and online back-translation, we need a non-stream (batched) dataset
-            if lang in params.ae_steps or lang in params.bt_src_langs:
+            if lang in params.ae_steps or lang in params.bt_src_langs or lang in params.rtt_src_langs:
 
                 # create batched dataset
                 dataset = Dataset(mono_data['sentences'], mono_data['positions'], params)
@@ -282,8 +282,18 @@ def check_data_params(params):
     assert len(params.bt_steps) == 0 or not params.encoder_only
     params.bt_src_langs = [l1 for l1, _, _ in params.bt_steps]
 
+    # round-trip translation steps
+    params.rtt_steps = [tuple(s.split('-')) for s in params.rtt_steps.split(',') if len(s) > 0]
+    assert all([len(x) == 3 for x in params.rtt_steps])
+    assert all([l1 in params.langs and l2 in params.langs and l3 in params.langs for l1, l2, l3 in params.rtt_steps])
+    assert all([l1 == l3 and l1 != l2 for l1, l2, l3 in params.rtt_steps])
+    assert len(params.rtt_steps) == len(set(params.rtt_steps))
+    assert len(params.rtt_steps) == 0 or not params.encoder_only
+    params.rtt_src_langs = [l1 for l1, _, _ in params.rtt_steps]
+
+
     # check monolingual datasets
-    required_mono = set([l1 for l1, l2 in (params.mlm_steps + params.clm_steps) if l2 is None] + params.ae_steps + params.bt_src_langs)
+    required_mono = set([l1 for l1, l2 in (params.mlm_steps + params.clm_steps) if l2 is None] + params.ae_steps + params.bt_src_langs + params.rtt_src_langs)
     params.mono_dataset = {
         lang: {
             splt: os.path.join(params.data_path, '%s.%s.pth' % (splt, lang))

@@ -122,7 +122,8 @@ class Trainer(object):
             [('AE-%s' % lang, []) for lang in params.ae_steps] +
             [('MT-%s-%s' % (l1, l2), []) for l1, l2 in params.mt_steps] +
             [('BT-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps] +
-            [('RTTAE-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps if params.rttae]
+            [('RTTAE-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps if params.rttae] +
+            [('RTTAEsep-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps if params.rtt_steps]
         )
         self.last_time = time.time()
 
@@ -957,7 +958,7 @@ class EncDecTrainer(Trainer):
           #TODO(pr): processed_w too?
           self.stats['processed_w'] += (len1 - 1).sum().item()
 
-    def rtt_step(self, lang1, lang2, lang3, lambda_coeff, enable_rttae):
+    def rtt_step(self, lang1, lang2, lang3, lambda_coeff):
         """
         Round-trip translation step for machine translation.
         """
