@@ -183,6 +183,8 @@ def get_parser():
                         help="Enable round-trip translation auto-encoding with bt steps")
     parser.add_argument("--rttae_delay", type=int, default=-1,
                         help="Don't enable the rttae objective until this many epochs have passed")
+    parser.add_argument("--rtt_align", action="store_true",
+                        help="Use alignment based on BT for AE noise")
 
     # reload pretrained embeddings / pretrained model / checkpoint
     parser.add_argument("--reload_emb", type=str, default="",
@@ -293,11 +295,14 @@ def main(params):
 
             # back-translation steps
             for lang1, lang2, lang3 in shuf_order(params.bt_steps):
-                trainer.bt_step(lang1, lang2, lang3, params.lambda_bt, params.rttae and trainer.epoch > params.rttae_delay)
+                trainer.bt_step(lang1, lang2, lang3, params.lambda_bt, params.rttae and trainer.epoch >= params.rttae_delay)
 
             # rtt steps (ALPHA)
             for lang1, lang2, lang3 in shuf_order(params.rtt_steps):
+              if not params.rtt_align:
                 trainer.rtt_step(lang1, lang2, lang3, params.lambda_rtt)
+              else if trainer.epoch >= params.rttae_delay:
+                trainer.rtt_step_aligned(lang1, lang2, lang3, params.lambda_rtt)
 
             trainer.iter()
 

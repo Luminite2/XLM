@@ -123,7 +123,8 @@ class Trainer(object):
             [('MT-%s-%s' % (l1, l2), []) for l1, l2 in params.mt_steps] +
             [('BT-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps] +
             [('RTTAE-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps if params.rttae] +
-            [('RTTAEsep-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps if params.rtt_steps]
+            [('RTTAEsep-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps if params.rtt_steps] +
+            [('RTTAEalign-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps if params.rtt_steps and params.rtt_align]
         )
         self.last_time = time.time()
 
@@ -1005,6 +1006,8 @@ class EncDecTrainer(Trainer):
 
             del enc_rtt1
 
+
+
             # training mode
             self.encoder.train()
             self.decoder.train()
@@ -1025,6 +1028,139 @@ class EncDecTrainer(Trainer):
         _, loss_rtt = self.decoder('predict', tensor=dec_rtt, pred_mask=pred_mask, y=y1, get_scores=False)
         self.stats[('RTTAEsep-%s-%s-%s' % (lang1, lang2, lang3))].append(loss_rtt.item()) #TODO(pr): make sure stats entry exists
         self.optimize(loss_rtt)
+
+        # number of processed sentences / words
+        self.n_sentences += params.batch_size
+        self.stats['processed_s'] += len1.size(0)
+        self.stats['processed_w'] += (len1 - 1).sum().item()
+
+
+    def rtt_step_aligned(self, lang1, lang2, lang3, lambda_coeff):
+        """
+        Round-trip translation step for machine translation.
+        """
+        assert lambda_coeff >= 0
+        if lambda_coeff == 0:
+            return
+        assert lang1 == lang3 and lang1 != lang2 and lang2 is not None
+        params = self.params
+        _encoder = self.encoder.module if params.multi_gpu else self.encoder
+        _decoder = self.decoder.module if params.multi_gpu else self.decoder
+
+        lang1_id = params.lang2id[lang1]
+        lang2_id = params.lang2id[lang2]
+
+        # generate source batch
+        x1, len1 = self.get_batch('rtt', lang1)
+        langs1 = x1.clone().fill_(lang1_id)
+
+        # cuda
+        x1, len1, langs1 = to_cuda(x1, len1, langs1)
+        #print('DEBUG: langs1: {}'.format(langs1))
+        #print('DEBUG: langs1.size(): {}'.format(langs1.size()))
+        #print('DEBUG: x1.size(): {}'.format(x1.size()))
+        #print('DEBUG: len1: {}'.format(len1))
+        #print('DEBUG: len1.size(): {}'.format(len1.size()))
+
+        #DEBUG
+        #print('DEBUG: BEGIN')
+        #print('DEBUG: x1 type: {}\nx1 shape: {}'.format(type(x1), x1.shape))
+        #print('DEBUG: x1[:,0]: {}'.format(x1[:,0]))
+        #print('DEBUG: id2word[x1[0,0]]: {}'.format(self.data['dico'].id2word[x1[0,0].item()]))
+        #debug_wordid = x1[1,0].item()
+        #print('DEBUG: id2word[x1[1,0]]: {}'.format(self.data['dico'].id2word[debug_wordid]))
+        #print('DEBUG: input embedding: {}'.format(self.encoder.embeddings.weight[debug_wordid]))
+        #print('DEBUG: output embedding: {}'.format(self.decoder.pred_layer.proj.weight[debug_wordid]))
+        #print('DEBUG: x1 lengths: {}'.format(len1))
+        #TODO(pr): determine what the AE noise does with the EOS and pad tokens, and do the same
+        #x1 is always 2D; second dim looks to usually be 2, sometimes 1 (in toy)
+        #actually, I think the first is the maxlen, second is number of sents
+        #DEBUG
+
+        # generate a round-trip translation
+        with torch.no_grad():
+
+            # evaluation mode
+            self.encoder.eval()
+            self.decoder.eval()
+
+            # encode source sentence and translate it
+            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            enc1 = enc1.transpose(0, 1)
+            x2, len2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
+            langs2 = x2.clone().fill_(lang2_id)
+
+            # free CUDA memory
+            del enc1
+
+            #DEBUG
+            noised_x = x2.clone()
+            sentences = []
+            lengths = []
+            eos = self.params.eos_index
+            for sent_idx in range(len(len1)):
+              ex1 = self.encoder.embeddings.weight[x1[:,sent_idx][:len1[sent_idx]-1]]
+              #print('DEBUG: ex1 shape: {}'.format(ex1.shape))
+              ex2 = self.encoder.embeddings.weight[x2[:,sent_idx][:len2[sent_idx]-1]]
+              #print('DEBUG: ex2 shape: {}'.format(ex2.shape))
+              maxes = ex1.mm(ex2.T).max(dim=0)
+              #print('DEBUG: maxes: {}'.format(maxes))
+              words = x1[:,sent_idx][:len1[sent_idx] - 1].tolist()
+              max_indices = maxes.indices[torch.nonzero(maxes.indices)].squeeze(1).tolist()
+              #print('DEBUG: max_indices: {}'.format(max_indices))
+              new_s = [eos] + [words[idx] for idx in max_indices]
+              if len(new_s) == 1:
+                new_s.append(words[np.random.randint(1,len(words))])
+              new_s.append(eos)
+              #print('DEBUG: new_s: {}'.format(new_s))
+              assert len(new_s) >= 3 and new_s[0] == eos and new_s[-1] == eos
+              sentences.append(new_s)
+              lengths.append(len(new_s))
+            del x2
+            del len2
+            #print('DEBUG: lengths: {}'.format(lengths))
+
+            noised_lens = torch.LongTensor(lengths)
+            noised_lens = noised_lens.cuda()
+
+            noised_slen, noised_bs = noised_lens.max().item(), noised_lens.size(0)
+            noised_langs = x1.new(noised_slen, noised_bs).fill_(lang1_id)
+            noised_langs = noised_langs.cuda()
+
+            noised_x1 = torch.LongTensor(noised_lens.max(), noised_lens.size(0)).fill_(self.params.pad_index)
+            for i in range(noised_lens.size(0)):
+              noised_x1[:noised_lens[i], i].copy_(torch.LongTensor(sentences[i]))
+            noised_x1 = noised_x1.cuda()
+
+            #DEBUG
+
+            # training mode
+            self.encoder.train()
+            self.decoder.train()
+
+        # encode generate sentence
+        #print('DEBUG: noised_x1.size(): {}'.format(noised_x1.size()))
+        enc2 = self.encoder('fwd', x=noised_x1, lengths=noised_lens, langs=noised_langs, causal=False)
+        enc2 = enc2.transpose(0, 1)
+
+        # words to predict
+        alen = torch.arange(len1.max(), dtype=torch.long, device=len1.device)
+        pred_mask = alen[:, None] < len1[None] - 1  # do not predict anything given the last target word #TODO(pr): figure this out; need to change if reusing for RTT?
+        y1 = x1[1:].masked_select(pred_mask[:-1])
+
+        dec2 = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc2, src_len=noised_lens)
+
+        _, loss = self.decoder('predict', tensor=dec2, pred_mask=pred_mask, y=y1, get_scores=False)
+        self.stats[('RTTAEalign-%s-%s-%s' % (lang1, lang2, lang3))].append(loss.item())
+        self.optimize(loss)
+
+        #enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False) #TODO(pr): not 100% sure on 'fwd' bit
+        #enc_rtt2 = enc_rtt2.transpose(0, 1)
+        #(MAKE SURE alen stuff is good)
+        #dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3)
+        #_, loss_rtt = self.decoder('predict', tensor=dec_rtt, pred_mask=pred_mask, y=y1, get_scores=False)
+        #self.stats[('RTTAEsep-%s-%s-%s' % (lang1, lang2, lang3))].append(loss_rtt.item()) #TODO(pr): make sure stats entry exists
+        #self.optimize(loss_rtt)
 
         # number of processed sentences / words
         self.n_sentences += params.batch_size
