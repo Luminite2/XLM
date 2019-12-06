@@ -1056,6 +1056,11 @@ class EncDecTrainer(Trainer):
 
         # cuda
         x1, len1, langs1 = to_cuda(x1, len1, langs1)
+        log_in_out = np.random.random() < 0.05
+        selected_sentence = np.random.randint(0,x1.size(1))
+        if log_in_out:
+          print('DEBUG: x1[:,{}]: {}'.format(selected_sentence, [self.data['dico'].id2word[x1[i,selected_sentence].item()] for i in range(x1.size(0))]))
+
         #print('DEBUG: langs1: {}'.format(langs1))
         #print('DEBUG: langs1.size(): {}'.format(langs1.size()))
         #print('DEBUG: x1.size(): {}'.format(x1.size()))
@@ -1132,6 +1137,8 @@ class EncDecTrainer(Trainer):
               noised_x1[:noised_lens[i], i].copy_(torch.LongTensor(sentences[i]))
             noised_x1 = noised_x1.cuda()
 
+            if log_in_out:
+              print('DEBUG: noised_x1[:,{}]: {}'.format(selected_sentence,[self.data['dico'].id2word[noised_x1[i,selected_sentence].item()] for i in range(noised_x1.size(0))]))
             #DEBUG
 
             # training mode
