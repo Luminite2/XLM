@@ -301,7 +301,7 @@ def main(params):
             for lang1, lang2, lang3 in shuf_order(params.rtt_steps):
               if not params.rtt_align:
                 trainer.rtt_step(lang1, lang2, lang3, params.lambda_rtt)
-              else if trainer.epoch >= params.rttae_delay:
+              elif trainer.epoch >= params.rttae_delay:
                 trainer.rtt_step_aligned(lang1, lang2, lang3, params.lambda_rtt)
 
             trainer.iter()
