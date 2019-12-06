@@ -123,7 +123,7 @@ class Trainer(object):
             [('MT-%s-%s' % (l1, l2), []) for l1, l2 in params.mt_steps] +
             [('BT-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps] +
             [('RTTAE-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.bt_steps if params.rttae] +
-            [('RTTAEsep-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps if params.rtt_steps] +
+            [('RTTAEsep-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps if params.rtt_steps and not params.rtt_align] +
             [('RTTAEalign-%s-%s-%s' % (l1, l2, l3), []) for l1, l2, l3 in params.rtt_steps if params.rtt_steps and params.rtt_align]
         )
         self.last_time = time.time()
