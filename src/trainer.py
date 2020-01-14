@@ -908,13 +908,14 @@ class EncDecTrainer(Trainer):
             # free CUDA memory
             del enc1
 
-            enc_rtt1 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
-            enc_rtt1 = enc_rtt1.transpose(0, 1)
+            if enable_rttae:
+                enc_rtt1 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+                enc_rtt1 = enc_rtt1.transpose(0, 1)
 
-            x3, len3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
-            langs3 = x3.clone().fill_(lang1_id)
+                x3, len3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
+                langs3 = x3.clone().fill_(lang1_id)
 
-            del enc_rtt1
+                del enc_rtt1
 
             # training mode
             self.encoder.train()
