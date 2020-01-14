@@ -459,6 +459,7 @@ class TransformerModel(nn.Module):
 
         # input batch
         bs = len(src_len)
+        max_len = min(max_len,N_MAX_POSITIONS)
         assert src_enc.size(0) == bs
 
         # generated sentences
