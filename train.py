@@ -185,6 +185,8 @@ def get_parser():
                         help="Don't enable the rttae objective until this many epochs have passed")
     parser.add_argument("--rtt_align", action="store_true",
                         help="Use alignment based on BT for AE noise")
+    parser.add_argument("--ae_stop_after", type=int, default=-1, 
+                        help="Stop normal denoising AE after this many epochs")
 
     # reload pretrained embeddings / pretrained model / checkpoint
     parser.add_argument("--reload_emb", type=str, default="",
@@ -286,8 +288,9 @@ def main(params):
                 trainer.pc_step(lang1, lang2, params.lambda_pc)
 
             # denoising auto-encoder steps
-            for lang in shuf_order(params.ae_steps):
-                trainer.mt_step(lang, lang, params.lambda_ae)
+            if params.ae_stop_after == -1 or trainer.epoch < params.ae_stop_after:
+              for lang in shuf_order(params.ae_steps):
+                  trainer.mt_step(lang, lang, params.lambda_ae)
 
             # machine translation steps
             for lang1, lang2 in shuf_order(params.mt_steps, params):
@@ -298,11 +301,12 @@ def main(params):
                 trainer.bt_step(lang1, lang2, lang3, params.lambda_bt, params.rttae and trainer.epoch >= params.rttae_delay)
 
             # rtt steps (ALPHA)
-            for lang1, lang2, lang3 in shuf_order(params.rtt_steps):
-              if not params.rtt_align:
-                trainer.rtt_step(lang1, lang2, lang3, params.lambda_rtt)
-              elif trainer.epoch >= params.rttae_delay:
-                trainer.rtt_step_aligned(lang1, lang2, lang3, params.lambda_rtt)
+            if trainer.epoch >= params.rttae_delay:
+              for lang1, lang2, lang3 in shuf_order(params.rtt_steps):
+                if not params.rtt_align:
+                  trainer.rtt_step(lang1, lang2, lang3, params.lambda_rtt)
+                else:
+                  trainer.rtt_step_aligned(lang1, lang2, lang3, params.lambda_rtt)
 
             trainer.iter()
 
