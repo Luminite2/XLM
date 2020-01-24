@@ -64,6 +64,8 @@ def get_parser():
                         help="Use sinusoidal embeddings")
     parser.add_argument("--use_lang_emb", type=bool_flag, default=True,
                         help="Use language embedding")
+    parser.add_argument("--word_position_embeddings", type=bool_flag, default=False,
+                        help="Use word position embeddings in addition to token positions")
 
     # memory parameters
     parser.add_argument("--use_memory", type=bool_flag, default=False,
