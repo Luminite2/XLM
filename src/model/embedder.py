@@ -104,6 +104,7 @@ class SentenceEmbedder(object):
             if hasattr(self.model, 'lang_embeddings'):
                 parameters += self.model.lang_embeddings.parameters()
                 logger.info("Adding language embedding parameters to optimizer")
+            #TODO(prkriley): Add word-position embeddings to optimizer here
             parameters += self.model.layer_norm_emb.parameters()
         # layers
         for l in range(max(i - 1, 0), j):

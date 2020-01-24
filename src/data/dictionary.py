@@ -121,6 +121,23 @@ class Dictionary(object):
         logger.info("Minimum frequency count: %i. Dictionary size: %i -> %i (removed %i words)."
                     % (min_count, init_size, len(self), init_size - len(self)))
 
+    def _find_word_finals(self):
+      finals = set()
+      for idx in self.id2word:
+        if not self.id2word[idx].endswith('@@'):
+          finals.add(idx)
+      return finals
+
+    def is_word_final(self, idx):
+      if not hasattr(self, 'word_finals'):
+        self.word_finals = self._find_word_finals()
+      return idx in self.word_finals
+
+    def word_positions(self, x):
+      #TODO(prkriley): x is slen,bs; run down each column, increment if word-final
+      #can we map it them cumulative sum?
+      pass
+
     @staticmethod
     def read_vocab(vocab_path):
         """

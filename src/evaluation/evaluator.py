@@ -300,6 +300,7 @@ class Evaluator(object):
             x, lengths, positions, langs, pred_mask, y = to_cuda(x, lengths, positions, langs, pred_mask, y)
 
             # forward / loss
+            #TODO(prkriley): word_pos_emb?
             tensor = model('fwd', x=x, lengths=lengths, positions=positions, langs=langs, causal=True)
             word_scores, loss = model('predict', tensor=tensor, pred_mask=pred_mask, y=y, get_scores=True)
 
@@ -372,6 +373,7 @@ class Evaluator(object):
             x, y, pred_mask, lengths, positions, langs = to_cuda(x, y, pred_mask, lengths, positions, langs)
 
             # forward / loss
+            #TODO(prkriley): word_pos_emb?
             tensor = model('fwd', x=x, lengths=lengths, positions=positions, langs=langs, causal=False)
             word_scores, loss = model('predict', tensor=tensor, pred_mask=pred_mask, y=y, get_scores=True)
 

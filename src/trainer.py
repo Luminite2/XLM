@@ -482,14 +482,17 @@ class Trainer(object):
             x, lengths = self.get_batch(name, lang1, stream=True)
             positions = None
             langs = x.clone().fill_(lang1_id) if params.n_langs > 1 else None
+            #TODO(prkriley): pos is none... probably because it's easy, but word_pos isn't, so it should be done properly
         elif lang1 == lang2:
             (x1, len1) = self.get_batch(name, lang1)
             (x2, len2) = (x1, len1)
             (x1, len1) = self.add_noise(x1, len1)
             x, lengths, positions, langs = concat_batches(x1, len1, lang1_id, x2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=False)
+            #TODO(prkriley): word_pos is gonna require some code reading; see how result is used, and how concat works too
         else:
             (x1, len1), (x2, len2) = self.get_batch(name, lang1, lang2)
             x, lengths, positions, langs = concat_batches(x1, len1, lang1_id, x2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=True)
+            #TODO(prkriley): probably not going to support word_pos for supervised setting yet, so should do an error here if requested
 
         return x, lengths, positions, langs, (None, None) if lang2 is None else (len1, len2)
 
@@ -671,6 +674,7 @@ class Trainer(object):
         model.train()
 
         # generate batch / select words to predict
+        #TODO(prkriley): clm is unused currently, but consider word_pos-proofing this
         x, lengths, positions, langs, _ = self.generate_batch(lang1, lang2, 'causal')
         x, lengths, positions, langs, _ = self.round_batch(x, lengths, positions, langs)
         alen = torch.arange(lengths.max(), dtype=torch.long, device=lengths.device)
@@ -712,6 +716,8 @@ class Trainer(object):
 
         # generate batch / select words to predict
         x, lengths, positions, langs, _ = self.generate_batch(lang1, lang2, 'pred')
+        #TODO(prkriley): word_positions could go here and be carried through
+        #TODO(prkriley): OR dynamically calculate at use time
         x, lengths, positions, langs, _ = self.round_batch(x, lengths, positions, langs)
         x, y, pred_mask = self.mask_out(x, lengths)
 
@@ -762,6 +768,7 @@ class Trainer(object):
         x2, len2 = x2[:, idx], len2[idx]
 
         # generate batch / cuda
+        #TODO(prkriley): I don't think my code will hit this, but might consider proofing this concat call for word_pos stuff
         x, lengths, positions, langs = concat_batches(x1, len1, lang1_id, x2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=False)
         x, lengths, positions, langs, new_idx = self.round_batch(x, lengths, positions, langs)
         if new_idx is not None:

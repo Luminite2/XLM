@@ -260,6 +260,7 @@ class TransformerModel(nn.Module):
         self.id2lang = params.id2lang
         self.lang2id = params.lang2id
         self.use_lang_emb = getattr(params, 'use_lang_emb', True)
+        self.use_word_pos_emb = getattr(params, 'word_position_embeddings', False)
         assert len(self.dico) == self.n_words
         assert len(self.id2lang) == len(self.lang2id) == self.n_langs
 
@@ -274,8 +275,13 @@ class TransformerModel(nn.Module):
 
         # embeddings
         self.position_embeddings = Embedding(N_MAX_POSITIONS, self.dim)
+        #TODO(prkriley): create word_position embeddings here
+        if self.use_word_pos_emb:
+            self.word_position_embeddings = Embedding(N_MAX_POSITIONS, self.dim)
         if params.sinusoidal_embeddings:
             create_sinusoidal_embeddings(N_MAX_POSITIONS, self.dim, out=self.position_embeddings.weight)
+            if self.use_word_pos_emb:
+                create_sinusoidal_embeddings(N_MAX_POSITIONS, self.dim, out=self.word_position_embeddings.weight)
         if params.n_langs > 1 and self.use_lang_emb:
             self.lang_embeddings = Embedding(self.n_langs, self.dim)
         self.embeddings = Embedding(self.n_words, self.dim, padding_idx=self.pad_index)
@@ -357,6 +363,8 @@ class TransformerModel(nn.Module):
             src_mask = torch.arange(src_len.max(), dtype=torch.long, device=lengths.device) < src_len[:, None]
 
         # positions
+        #TODO(prkriley): sometimes positions is none; not sure if we can do word_pos in those scenarios
+        #TODO(prkriley): may need to provide optional arg, do when possible, but brute-force otherwise
         if positions is None:
             positions = x.new(slen).long()
             positions = torch.arange(slen, out=positions).unsqueeze(0)
@@ -384,6 +392,10 @@ class TransformerModel(nn.Module):
         tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
         if langs is not None and self.use_lang_emb:
             tensor = tensor + self.lang_embeddings(langs)
+        #TODO(prkriley): this is where you would add something else (like a word-wise positional embedding)
+        #TODO(prkriley): to do dynamically, need a pos->wpos function, which I THINK requires knowing which tokens are word-final (not pos->wpos, but idxs->wpos)
+        if self.use_word_pos_emb:
+          tensor = tensor + self.word_position_embeddings(word_positions).expand_as(tensor) #TODO(prkriley): haven't defined word_positions yet
         tensor = self.layer_norm_emb(tensor)
         tensor = F.dropout(tensor, p=self.dropout, training=self.training)
         tensor *= mask.unsqueeze(-1).to(tensor.dtype)
