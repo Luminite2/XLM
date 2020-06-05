@@ -121,22 +121,38 @@ class Dictionary(object):
         logger.info("Minimum frequency count: %i. Dictionary size: %i -> %i (removed %i words)."
                     % (min_count, init_size, len(self), init_size - len(self)))
 
-    def _find_word_finals(self):
-      finals = set()
+    def _get_id2final(self):
+      id2final = torch.zeros(len(self.id2word), dtype=torch.int64)
       for idx in self.id2word:
         if not self.id2word[idx].endswith('@@'):
-          finals.add(idx)
-      return finals
+          id2final[idx] = 1
+      return id2final
 
-    def is_word_final(self, idx):
-      if not hasattr(self, 'word_finals'):
-        self.word_finals = self._find_word_finals()
-      return idx in self.word_finals
+    @property
+    def id2final(self):
+      if not hasattr(self, '_id2final'):
+        self._id2final = self._get_id2final()
+      return self._id2final
 
+    def finals_mask(self, x):
+      slen,bs = x.shape
+      positions = torch.arange(slen).unsqueeze(-1).expand(slen,bs)
+      batch_ids = torch.arange(bs).unsqueeze(0).expand(slen,bs)
+      sparse_onehot_x_indices = torch.stack(x.flatten(), positions.flatten(), batch_ids.flatten())
+      #TODO(prkriley): probably need to cuda()-fy some of these
+      sparse_onehot_x = torch.sparse.LongTensor(sparse_onehot_x_indices, torch.ones(slen*bs), size=(len(self),slen,bs))
+      sparse_onehot_finals_indices = torch.stack((self.id2final.repeat(slen*bs), positions.repeat(2,1).flatten(), batch_ids.T.repeat(1,2).flatten()))
+      sparse_onehot_finals = torch.sparse.LongTensor(sparse_onehot_finals_indices, torch.ones(sparse_onehot_finals_indices.shape[1]), size=sparse_onehot_x.shape)
+      x_finals_mask = torch.sparse.sum(sparse_onehot_x * sparse_onehot_finals, dim=0).to_dense()
+      return x_finals_mask
+    
     def word_positions(self, x):
       #TODO(prkriley): x is slen,bs; run down each column, increment if word-final
       #can we map it them cumulative sum?
-      pass
+      x_finals_mask = self.finals_mask(x)
+      x_initials_mask = x_finals_mask.roll(1,0)
+      x_initials_mask[0] = torch.ones(x_initials_mask.shape[1])
+      x_word_pos = x_initials_mask.cumsum(0)
 
     @staticmethod
     def read_vocab(vocab_path):
