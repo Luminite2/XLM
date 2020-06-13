@@ -335,7 +335,7 @@ class TransformerModel(nn.Module):
         else:
             raise Exception("Unknown mode: %s" % mode)
 
-    def fwd(self, x, lengths, causal, src_enc=None, src_len=None, positions=None, langs=None, cache=None):
+    def fwd(self, x, lengths, causal, src_enc=None, src_len=None, positions=None, langs=None, cache=None, word_positions=None):
         """
         Inputs:
             `x` LongTensor(slen, bs), containing word indices
@@ -351,6 +351,16 @@ class TransformerModel(nn.Module):
         slen, bs = x.size()
         assert lengths.size(0) == bs
         assert lengths.max().item() <= slen
+
+        if self.use_word_pos_emb:
+          if word_positions is None:
+            word_positions = self.dico.word_positions(x).transpose(0,1)
+          else:
+            assert word_positions.size() == (slen, bs)
+            word_positions = word_positions.transpose(0, 1)
+        else:
+          word_positions = None
+
         x = x.transpose(0, 1)  # batch size as dimension 0
         assert (src_enc is None) == (src_len is None)
         if src_enc is not None:
@@ -363,15 +373,12 @@ class TransformerModel(nn.Module):
             src_mask = torch.arange(src_len.max(), dtype=torch.long, device=lengths.device) < src_len[:, None]
 
         # positions
-        #TODO(prkriley): sometimes positions is none; not sure if we can do word_pos in those scenarios
-        #TODO(prkriley): may need to provide optional arg, do when possible, but brute-force otherwise
         if positions is None:
             positions = x.new(slen).long()
             positions = torch.arange(slen, out=positions).unsqueeze(0)
         else:
             assert positions.size() == (slen, bs)
             positions = positions.transpose(0, 1)
-
         # langs
         if langs is not None:
             assert langs.size() == (slen, bs)
@@ -382,6 +389,8 @@ class TransformerModel(nn.Module):
             _slen = slen - cache['slen']
             x = x[:, -_slen:]
             positions = positions[:, -_slen:]
+            if word_positions is not None:
+              word_positions = word_positions[:, -_slen:]
             if langs is not None:
                 langs = langs[:, -_slen:]
             mask = mask[:, -_slen:]
@@ -395,7 +404,7 @@ class TransformerModel(nn.Module):
         #TODO(prkriley): this is where you would add something else (like a word-wise positional embedding)
         #TODO(prkriley): to do dynamically, need a pos->wpos function, which I THINK requires knowing which tokens are word-final (not pos->wpos, but idxs->wpos)
         if self.use_word_pos_emb:
-          tensor = tensor + self.word_position_embeddings(word_positions).expand_as(tensor) #TODO(prkriley): haven't defined word_positions yet
+          tensor = tensor + self.word_position_embeddings(word_positions).expand_as(tensor)
         tensor = self.layer_norm_emb(tensor)
         tensor = F.dropout(tensor, p=self.dropout, training=self.training)
         tensor *= mask.unsqueeze(-1).to(tensor.dtype)
@@ -482,6 +491,9 @@ class TransformerModel(nn.Module):
         # positions
         positions = src_len.new(max_len).long()
         positions = torch.arange(max_len, out=positions).unsqueeze(1).expand(max_len, bs)
+        #TODO(prkriley): word_pos
+        word_positions = src_len.new(max_len, bs).long().fill_(0) if self.use_word_pos_emb else None
+
 
         # language IDs
         langs = src_len.new(max_len).long().fill_(tgt_lang_id)
@@ -507,7 +519,8 @@ class TransformerModel(nn.Module):
                 causal=True,
                 src_enc=src_enc,
                 src_len=src_len,
-                cache=cache
+                cache=cache,
+                word_positions=word_positions[:cur_len] if word_positions else None
             )
             assert tensor.size() == (1, bs, self.dim), (cur_len, max_len, src_enc.size(), tensor.size(), (1, bs, self.dim))
             tensor = tensor.data[-1, :, :].type_as(src_enc)  # (bs, dim)
@@ -522,6 +535,10 @@ class TransformerModel(nn.Module):
 
             # update generations / lengths / finished sentences / current length
             generated[cur_len] = next_words * unfinished_sents + self.pad_index * (1 - unfinished_sents)
+            #TODO(prkriley): update word_pos here using self.dico
+            if word_positions:
+              word_finals = self.dico.finals_mask(next_words)
+              word_positions[cur_len] = word_positions[cur_len-1] + word_finals
             gen_len.add_(unfinished_sents)
             unfinished_sents.mul_(next_words.ne(self.eos_index).long())
             cur_len = cur_len + 1
@@ -538,7 +555,7 @@ class TransformerModel(nn.Module):
         # sanity check
         assert (generated == self.eos_index).sum() == 2 * bs
 
-        return generated[:cur_len], gen_len
+        return generated[:cur_len], gen_len, word_positions[:cur_len]
 
     def generate_beam(self, src_enc, src_len, tgt_lang_id, beam_size, length_penalty, early_stopping, max_len=200):
         """

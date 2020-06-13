@@ -121,8 +121,27 @@ class Dictionary(object):
         logger.info("Minimum frequency count: %i. Dictionary size: %i -> %i (removed %i words)."
                     % (min_count, init_size, len(self), init_size - len(self)))
 
+    def _get_final_ids(self):
+      finals = []
+      for idx in self.id2word:
+        if not self.id2word[idx].endswith('@@'):
+          finals.append(idx)
+      return np.array(finals)
+
+    @property
+    def final_ids(self):
+      if not hasattr(self, '_final_ids'):
+        self._final_ids = self._get_final_ids()
+      return self._final_ids
+
+    @property
+    def torch_final_ids(self):
+      if not hasattr(self, '_torch_final_ids'):
+        self._torch_final_ids = torch.from_numpy(self.final_ids)
+      return self._torch_final_ids
+
     def _get_id2final(self):
-      id2final = torch.zeros(len(self.id2word), dtype=torch.int64)
+      id2final = np.zeros(len(self.id2word), dtype=np.int32)
       for idx in self.id2word:
         if not self.id2word[idx].endswith('@@'):
           id2final[idx] = 1
@@ -134,25 +153,48 @@ class Dictionary(object):
         self._id2final = self._get_id2final()
       return self._id2final
 
+    @property
+    def torch_id2final(self):
+      if not hasattr(self, '_torch_id2final'):
+        self._torch_id2final = torch.from_numpy(self.id2final)
+      return self._torch_id2final
+
     def finals_mask(self, x):
+      if len(x.shape) == 2:
+        return self._finals_mask_2d(x)
+      else:
+        return self._finals_mask_1d(x)
+
+    def _finals_mask_1d(self, x):
+      bs, = x.shape
+      batch_ids = torch.arange(bs)
+      sparse_onehot_x_indices = torch.stack(x.flatten(), batch_ids.flatten())
+      sparse_onehot_x = torch.sparse.LongTensor(sparse_onehot_x_indices, torch.ones(bs), size=(len(self),bs))
+      num_finals = self.torch_final_ids.shape[0]
+      sparse_onehot_finals_indices = torch.stack(self.torch_final_ids.repeat(bs), batch_ids.unsqueeze(-1).repeat(1,num_finals).flatten())
+      sparse_onehot_finals = torch.sparse.LongTensor(sparse_onehot_finals_indices, torch.ones(sparse_onehot_finals_indices.shape[1]), size=sparse_onehot_x.shape)
+      x_finals_mask = torch.sparse.sum(sparse_onehot_x * sparse_onehot_finals, dim=0).to_dense()
+      return x_finals_mask
+
+    def _finals_mask_2d(self, x):
       slen,bs = x.shape
       positions = torch.arange(slen).unsqueeze(-1).expand(slen,bs)
       batch_ids = torch.arange(bs).unsqueeze(0).expand(slen,bs)
       sparse_onehot_x_indices = torch.stack(x.flatten(), positions.flatten(), batch_ids.flatten())
       #TODO(prkriley): probably need to cuda()-fy some of these
       sparse_onehot_x = torch.sparse.LongTensor(sparse_onehot_x_indices, torch.ones(slen*bs), size=(len(self),slen,bs))
-      sparse_onehot_finals_indices = torch.stack((self.id2final.repeat(slen*bs), positions.repeat(2,1).flatten(), batch_ids.T.repeat(1,2).flatten()))
+      num_finals = self.torch_final_ids.shape[0]
+      sparse_onehot_finals_indices = torch.stack((self.torch_final_ids.repeat(slen*bs), torch.arange(slen).unsqueeze(-1).repeat(1,num_finals).repeat(bs,1).flatten(), batch_ids.T.repeat(1,num_finals).flatten()))
       sparse_onehot_finals = torch.sparse.LongTensor(sparse_onehot_finals_indices, torch.ones(sparse_onehot_finals_indices.shape[1]), size=sparse_onehot_x.shape)
       x_finals_mask = torch.sparse.sum(sparse_onehot_x * sparse_onehot_finals, dim=0).to_dense()
       return x_finals_mask
     
     def word_positions(self, x):
-      #TODO(prkriley): x is slen,bs; run down each column, increment if word-final
-      #can we map it them cumulative sum?
       x_finals_mask = self.finals_mask(x)
       x_initials_mask = x_finals_mask.roll(1,0)
       x_initials_mask[0] = torch.ones(x_initials_mask.shape[1])
       x_word_pos = x_initials_mask.cumsum(0)
+      return x_word_pos
 
     @staticmethod
     def read_vocab(vocab_path):

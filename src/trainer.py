@@ -327,7 +327,9 @@ class Trainer(object):
         except StopIteration:
             iterator = self.get_iterator(iter_name, lang1, lang2, stream)
             x = next(iterator)
-        return x if lang2 is None or lang1 < lang2 else x[::-1]
+        if not (lang2 is None or lang1 < lang2):
+          logger.warning("lang2 is less than or equal to lang1, which may break things.")
+        return x if lang2 is None or lang1 < lang2 else x[::-1] #TODO(prkriley): what is this reversal?
 
     def word_shuffle(self, x, l):
         """
@@ -479,14 +481,15 @@ class Trainer(object):
         lang2_id = params.lang2id[lang2] if lang2 is not None else None
 
         if lang2 is None:
-            x, lengths = self.get_batch(name, lang1, stream=True)
+            x, lengths, word_positions = self.get_batch(name, lang1, stream=True) #word_pos is in there too, at end
+            #TODO(prkriley): stream!!!!
             positions = None
             langs = x.clone().fill_(lang1_id) if params.n_langs > 1 else None
             #TODO(prkriley): pos is none... probably because it's easy, but word_pos isn't, so it should be done properly
         elif lang1 == lang2:
-            (x1, len1) = self.get_batch(name, lang1)
-            (x2, len2) = (x1, len1)
-            (x1, len1) = self.add_noise(x1, len1)
+            (x1, len1, wp1) = self.get_batch(name, lang1)
+            (x2, len2, wp2) = (x1, len1, wp1)
+            (x1, len1, wp1) = self.add_noise(x1, len1, wp1) #TODO(prkriley): decide what to do with noise and word_pos
             x, lengths, positions, langs = concat_batches(x1, len1, lang1_id, x2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=False)
             #TODO(prkriley): word_pos is gonna require some code reading; see how result is used, and how concat works too
         else:
@@ -494,7 +497,7 @@ class Trainer(object):
             x, lengths, positions, langs = concat_batches(x1, len1, lang1_id, x2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=True)
             #TODO(prkriley): probably not going to support word_pos for supervised setting yet, so should do an error here if requested
 
-        return x, lengths, positions, langs, (None, None) if lang2 is None else (len1, len2)
+        return x, lengths, positions, word_positions, langs, (None, None) if lang2 is None else (len1, len2)
 
     def save_checkpoint(self, name, include_optimizers=True):
         """
@@ -840,11 +843,14 @@ class EncDecTrainer(Trainer):
 
         # generate batch
         if lang1 == lang2:
-            (x1, len1) = self.get_batch('ae', lang1)
-            (x2, len2) = (x1, len1)
+            (x1, len1, wp1) = self.get_batch('ae', lang1)
+            (x2, len2, wp2) = (x1, len1, wp1)
             (x1, len1) = self.add_noise(x1, len1) #TODO(pr): think of a way to swap this out with RTT noise
+            wp1 = self.data['dico'].word_positions(x1)
         else:
             (x1, len1), (x2, len2) = self.get_batch('mt', lang1, lang2)
+            wp1 = None
+            wp2 = None
         langs1 = x1.clone().fill_(lang1_id)
         langs2 = x2.clone().fill_(lang2_id)
 
@@ -855,14 +861,14 @@ class EncDecTrainer(Trainer):
         assert len(y) == (len2 - 1).sum().item()
 
         # cuda
-        x1, len1, langs1, x2, len2, langs2, y = to_cuda(x1, len1, langs1, x2, len2, langs2, y)
+        x1, len1, langs1, x2, len2, langs2, y, wp1, wp2 = to_cuda(x1, len1, langs1, x2, len2, langs2, y, wp1, wp2)
 
         # encode source sentence
-        enc1 = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+        enc1 = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, word_positions=wp1)
         enc1 = enc1.transpose(0, 1)
 
         # decode target sentence
-        dec2 = self.decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1)
+        dec2 = self.decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1, word_positions=wp2)
 
         # loss
         _, loss = self.decoder('predict', tensor=dec2, pred_mask=pred_mask, y=y, get_scores=False)
@@ -893,11 +899,11 @@ class EncDecTrainer(Trainer):
         lang2_id = params.lang2id[lang2]
 
         # generate source batch
-        x1, len1 = self.get_batch('bt', lang1)
+        x1, len1, wp1 = self.get_batch('bt', lang1) #TODO(prkriley): word_pos?
         langs1 = x1.clone().fill_(lang1_id)
 
         # cuda
-        x1, len1, langs1 = to_cuda(x1, len1, langs1)
+        x1, len1, langs1, wp1 = to_cuda(x1, len1, langs1, wp1)
 
         # generate a translation
         with torch.no_grad():
@@ -907,19 +913,19 @@ class EncDecTrainer(Trainer):
             self.decoder.eval()
 
             # encode source sentence and translate it
-            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, word_positions=wp1)
             enc1 = enc1.transpose(0, 1)
-            x2, len2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
+            x2, len2, wp2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
             langs2 = x2.clone().fill_(lang2_id)
 
             # free CUDA memory
             del enc1
 
             if enable_rttae:
-                enc_rtt1 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+                enc_rtt1 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False, word_positions=wp2)
                 enc_rtt1 = enc_rtt1.transpose(0, 1)
 
-                x3, len3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
+                x3, len3, wp3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
                 langs3 = x3.clone().fill_(lang1_id)
 
                 del enc_rtt1
@@ -929,7 +935,7 @@ class EncDecTrainer(Trainer):
             self.decoder.train()
 
         # encode generate sentence
-        enc2 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+        enc2 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False, word_positions=wp2)
         enc2 = enc2.transpose(0, 1)
 
         # words to predict
@@ -938,7 +944,7 @@ class EncDecTrainer(Trainer):
         y1 = x1[1:].masked_select(pred_mask[:-1])
 
         # decode original sentence
-        dec3 = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc2, src_len=len2)
+        dec3 = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc2, src_len=len2, word_positions=wp1)
 
         # loss
         _, loss = self.decoder('predict', tensor=dec3, pred_mask=pred_mask, y=y1, get_scores=False)
@@ -952,13 +958,12 @@ class EncDecTrainer(Trainer):
         self.stats['processed_s'] += len1.size(0)
         self.stats['processed_w'] += (len1 - 1).sum().item()
 
-        #TODO(pr): RTTs are available here
-        if enable_rttae: #TODO(pr): replace with whatever controls whether to do RTT-AE
+        if enable_rttae:
 
-          enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False) #TODO(pr): not 100% sure on 'fwd' bit
+          enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False, word_positions=wp3)
           enc_rtt2 = enc_rtt2.transpose(0, 1)
           #(MAKE SURE alen stuff is good)
-          dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3)
+          dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3, word_positions=wp1)
           _, loss_rtt = self.decoder('predict', tensor=dec_rtt, pred_mask=pred_mask, y=y1, get_scores=False)
           self.stats[('RTTAE-%s-%s-%s' % (lang1, lang2, lang3))].append(loss_rtt.item()) #TODO(pr): make sure stats entry exists
           self.optimize(loss_rtt)
@@ -983,11 +988,11 @@ class EncDecTrainer(Trainer):
         lang2_id = params.lang2id[lang2]
 
         # generate source batch
-        x1, len1 = self.get_batch('rtt', lang1)
+        x1, len1, wp1 = self.get_batch('rtt', lang1) #TODO(prkriley): word_pos
         langs1 = x1.clone().fill_(lang1_id)
 
         # cuda
-        x1, len1, langs1 = to_cuda(x1, len1, langs1)
+        x1, len1, langs1, wp1 = to_cuda(x1, len1, langs1, wp1)
 
         # generate a round-trip translation
         with torch.no_grad():
@@ -997,19 +1002,19 @@ class EncDecTrainer(Trainer):
             self.decoder.eval()
 
             # encode source sentence and translate it
-            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, word_positions=wp1)
             enc1 = enc1.transpose(0, 1)
-            x2, len2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
+            x2, len2, wp2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
             langs2 = x2.clone().fill_(lang2_id)
 
             # free CUDA memory
             del enc1
 
             #enc_rtt1 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
-            enc_rtt1 = _encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+            enc_rtt1 = _encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False, word_positions=wp2)
             enc_rtt1 = enc_rtt1.transpose(0, 1)
 
-            x3, len3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
+            x3, len3, wp3 = _decoder.generate(enc_rtt1, len2, lang1_id, max_len=int(1.3 * len2.max().item() + 5))
             langs3 = x3.clone().fill_(lang1_id)
 
             del enc_rtt1
@@ -1021,7 +1026,7 @@ class EncDecTrainer(Trainer):
             self.decoder.train()
 
         # encode generate sentence
-        enc2 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False)
+        enc2 = self.encoder('fwd', x=x2, lengths=len2, langs=langs2, causal=False, word_positions=wp2)
         enc2 = enc2.transpose(0, 1)
 
         # words to predict
@@ -1029,10 +1034,10 @@ class EncDecTrainer(Trainer):
         pred_mask = alen[:, None] < len1[None] - 1  # do not predict anything given the last target word #TODO(pr): figure this out; need to change if reusing for RTT?
         y1 = x1[1:].masked_select(pred_mask[:-1])
 
-        enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False) #TODO(pr): not 100% sure on 'fwd' bit
+        enc_rtt2 = self.encoder('fwd', x=x3, lengths=len3, langs=langs3, causal=False, word_positions=wp3)
         enc_rtt2 = enc_rtt2.transpose(0, 1)
         #(MAKE SURE alen stuff is good)
-        dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3)
+        dec_rtt = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc_rtt2, src_len=len3, word_positions=wp1)
         _, loss_rtt = self.decoder('predict', tensor=dec_rtt, pred_mask=pred_mask, y=y1, get_scores=False)
         self.stats[('RTTAEsep-%s-%s-%s' % (lang1, lang2, lang3))].append(loss_rtt.item()) #TODO(pr): make sure stats entry exists
         self.optimize(loss_rtt)
@@ -1047,6 +1052,7 @@ class EncDecTrainer(Trainer):
         """
         Round-trip translation step for machine translation.
         """
+        #TODO(prkriley): word_pos-ify
         assert lambda_coeff >= 0
         if lambda_coeff == 0:
             return
@@ -1059,11 +1065,11 @@ class EncDecTrainer(Trainer):
         lang2_id = params.lang2id[lang2]
 
         # generate source batch
-        x1, len1 = self.get_batch('rtt', lang1)
+        x1, len1, wp1 = self.get_batch('rtt', lang1)
         langs1 = x1.clone().fill_(lang1_id)
 
         # cuda
-        x1, len1, langs1 = to_cuda(x1, len1, langs1)
+        x1, len1, langs1, wp1 = to_cuda(x1, len1, langs1, wp1)
         log_in_out = np.random.random() < 0.05
         selected_sentence = np.random.randint(0,x1.size(1))
         if log_in_out:
@@ -1098,9 +1104,9 @@ class EncDecTrainer(Trainer):
             self.decoder.eval()
 
             # encode source sentence and translate it
-            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            enc1 = _encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, word_positions=wp1)
             enc1 = enc1.transpose(0, 1)
-            x2, len2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
+            x2, len2, wp2 = _decoder.generate(enc1, len1, lang2_id, max_len=int(1.3 * len1.max().item() + 5))
             langs2 = x2.clone().fill_(lang2_id)
 
             # free CUDA memory
@@ -1144,6 +1150,7 @@ class EncDecTrainer(Trainer):
             for i in range(noised_lens.size(0)):
               noised_x1[:noised_lens[i], i].copy_(torch.LongTensor(sentences[i]))
             noised_x1 = noised_x1.cuda()
+            noised_wp1 = self.data['dico'].word_positions(noised_x1)
 
             if log_in_out:
               print('DEBUG: noised_x1[:,{}]: {}'.format(selected_sentence,[self.data['dico'].id2word[noised_x1[i,selected_sentence].item()] for i in range(noised_x1.size(0))]))
@@ -1155,7 +1162,7 @@ class EncDecTrainer(Trainer):
 
         # encode generate sentence
         #print('DEBUG: noised_x1.size(): {}'.format(noised_x1.size()))
-        enc2 = self.encoder('fwd', x=noised_x1, lengths=noised_lens, langs=noised_langs, causal=False)
+        enc2 = self.encoder('fwd', x=noised_x1, lengths=noised_lens, langs=noised_langs, causal=False, word_positions=noised_wp1)
         enc2 = enc2.transpose(0, 1)
 
         # words to predict
@@ -1163,7 +1170,7 @@ class EncDecTrainer(Trainer):
         pred_mask = alen[:, None] < len1[None] - 1  # do not predict anything given the last target word #TODO(pr): figure this out; need to change if reusing for RTT?
         y1 = x1[1:].masked_select(pred_mask[:-1])
 
-        dec2 = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc2, src_len=noised_lens)
+        dec2 = self.decoder('fwd', x=x1, lengths=len1, langs=langs1, causal=True, src_enc=enc2, src_len=noised_lens, word_positions=wp1)
 
         _, loss = self.decoder('predict', tensor=dec2, pred_mask=pred_mask, y=y1, get_scores=False)
         self.stats[('RTTAEalign-%s-%s-%s' % (lang1, lang2, lang3))].append(loss.item())

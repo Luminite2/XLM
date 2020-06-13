@@ -15,6 +15,7 @@ logger = getLogger()
 
 
 class StreamDataset(object):
+  #NOTE(prkriley): does this one not care about sentence boundaries? because it's all token-level ops?
 
     def __init__(self, sent, pos, bs, params):
         """
@@ -32,7 +33,7 @@ class StreamDataset(object):
         t_size = n_batches * bptt * bs
 
         buffer = np.zeros(t_size, dtype=sent.dtype) + self.eos
-        buffer[t_size - n_tokens:] = sent
+        buffer[t_size - n_tokens:] = sent #NOTE(prkriley): small gap at beginning, everything after is data? or is n_tokens always multiple of bptt?
         buffer = buffer.reshape((bs, n_batches * bptt)).T
         self.data = np.zeros((n_batches * bptt + 1, bs), dtype=sent.dtype) + self.eos
         self.data[1:] = buffer
@@ -72,12 +73,12 @@ class StreamDataset(object):
         for i in indexes:
             a = self.bptt * i
             b = self.bptt * (i + 1)
-            yield torch.from_numpy(self.data[a:b].astype(np.int64)), self.lengths
+            yield torch.from_numpy(self.data[a:b].astype(np.int64)), self.lengths, None
 
 
 class Dataset(object):
 
-    def __init__(self, sent, pos, params):
+    def __init__(self, sent, pos, params, word_pos=None):
 
         self.eos_index = params.eos_index
         self.pad_index = params.pad_index
@@ -112,7 +113,7 @@ class Dataset(object):
         assert len(self.pos) == (self.sent[self.pos[:, 1]] == eos).sum()  # check sentences indices
         # assert self.lengths.min() > 0                                     # check empty sentences
 
-    def batch_sentences(self, sentences):
+    def batch_sentences(self, sentences, word_pos=None):
         """
         Take as input a list of n sentences (torch.LongTensor vectors) and return
         a tensor of size (slen, n) where slen is the length of the longest
@@ -121,14 +122,18 @@ class Dataset(object):
         # sentences = sorted(sentences, key=lambda x: len(x), reverse=True)
         lengths = torch.LongTensor([len(s) + 2 for s in sentences])
         sent = torch.LongTensor(lengths.max().item(), lengths.size(0)).fill_(self.pad_index)
+        wp = torch.LongTensor(sent.shape).fill_(self.pad_index) if word_pos else None
 
         sent[0] = self.eos_index
         for i, s in enumerate(sentences):
             if lengths[i] > 2:  # if sentence not empty
                 sent[1:lengths[i] - 1, i].copy_(torch.from_numpy(s.astype(np.int64)))
+                if word_pos:
+                  wp[1:lengths[i] -1, i].copy_(torch.from_numpy(word_pos[i].astype(np.int64)))
+                  #TODO(prkriley): determine whether bos/eos need positions
             sent[lengths[i] - 1, i] = self.eos_index
 
-        return sent, lengths
+        return sent, lengths, wp
 
     def remove_empty_sentences(self):
         """
@@ -188,8 +193,9 @@ class Dataset(object):
                 np.random.shuffle(sentence_ids)
                 sentence_ids = sentence_ids[:self.max_batch_size]
             pos = self.pos[sentence_ids]
-            sent = [self.sent[a:b] for a, b in pos]
-            sent = self.batch_sentences(sent)
+            sent = [self.sent[a:b] for a, b in pos] #TODO(prkriley): maybe index b doesn't need to have word_pos set? in loader.py
+            wp = [self.word_pos[a:b] for a, b in pos] if self.word_pos else None
+            sent = self.batch_sentences(sent, word_pos=wp)
             yield (sent, sentence_ids) if return_indices else sent
 
     def get_iterator(self, shuffle, group_by_size=False, n_sentences=-1, seed=None, return_indices=False):
