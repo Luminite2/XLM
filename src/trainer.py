@@ -623,7 +623,7 @@ class Trainer(object):
         self.save_checkpoint('checkpoint', include_optimizers=True)
         self.epoch += 1
 
-    def round_batch(self, x, lengths, positions, langs):
+    def round_batch(self, x, lengths, positions, word_positions, langs):
         """
         For float16 only.
         Sub-sample sentences in a batch, and add padding,
@@ -631,7 +631,7 @@ class Trainer(object):
         """
         params = self.params
         if not params.fp16 or len(lengths) < 8:
-            return x, lengths, positions, langs, None
+            return x, lengths, positions, word_positions, langs, None
 
         # number of sentences == 0 [8]
         bs1 = len(lengths)
@@ -661,7 +661,7 @@ class Trainer(object):
 
         assert x.size(0) % 8 == 0
         assert x.size(1) % 8 == 0
-        return x, lengths, positions, langs, idx
+        return x, lengths, positions, None, langs, idx
 
     def clm_step(self, lang1, lang2, lambda_coeff):
         """
@@ -718,17 +718,18 @@ class Trainer(object):
         model.train()
 
         # generate batch / select words to predict
-        x, lengths, positions, langs, _ = self.generate_batch(lang1, lang2, 'pred')
+        x, lengths, positions, word_positions, langs, _ = self.generate_batch(lang1, lang2, 'pred')
         #TODO(prkriley): word_positions could go here and be carried through
         #TODO(prkriley): OR dynamically calculate at use time
-        x, lengths, positions, langs, _ = self.round_batch(x, lengths, positions, langs)
+        x, lengths, positions, word_positions, langs, _ = self.round_batch(x, lengths, positions, word_positions, langs)
         x, y, pred_mask = self.mask_out(x, lengths)
 
         # cuda
-        x, y, pred_mask, lengths, positions, langs = to_cuda(x, y, pred_mask, lengths, positions, langs)
+        x, y, pred_mask, lengths, positions, word_positions, langs = to_cuda(x, y, pred_mask, lengths, positions, word_positions, langs)
 
         # forward / loss
-        tensor = model('fwd', x=x, lengths=lengths, positions=positions, langs=langs, causal=False)
+        #TODO(prkriley): word_positions needs to be done properly if this is a stream dataset
+        tensor = model('fwd', x=x, lengths=lengths, positions=positions, langs=langs, causal=False, word_positions=word_positions)
         _, loss = model('predict', tensor=tensor, pred_mask=pred_mask, y=y, get_scores=False)
         self.stats[('MLM-%s' % lang1) if lang2 is None else ('MLM-%s-%s' % (lang1, lang2))].append(loss.item())
         loss = lambda_coeff * loss

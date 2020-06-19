@@ -17,7 +17,7 @@ logger = getLogger()
 class StreamDataset(object):
   #NOTE(prkriley): does this one not care about sentence boundaries? because it's all token-level ops?
 
-    def __init__(self, sent, pos, bs, params):
+    def __init__(self, sent, pos, bs, params, word_pos=None):
         """
         Prepare batches for data iterator.
         """
@@ -37,6 +37,15 @@ class StreamDataset(object):
         buffer = buffer.reshape((bs, n_batches * bptt)).T
         self.data = np.zeros((n_batches * bptt + 1, bs), dtype=sent.dtype) + self.eos
         self.data[1:] = buffer
+
+        if word_pos:
+            wp_buffer = np.zeros(t_size, dtype=pos.dtype)
+            wp_buffer[t_size - n_tokens:] = word_pos
+            wp_buffer = wp_buffer.reshape((bs, n_batches * bptt)).T
+            self.word_pos = np.zeros((n_batches * bptt + 1, bs), dtype=pos.dtype)
+            self.word_pos[1:] = wp_buffer
+        else:
+            self.word_pos = None
 
         self.bptt = bptt
         self.n_tokens = n_tokens
@@ -62,6 +71,8 @@ class StreamDataset(object):
 
         # sub-select
         self.data = self.data[a * self.bptt:b * self.bptt]
+        if self.word_pos:
+            self.word_pos = self.word_pos[a * self.bptt:b * self.bptt]
         self.n_batches = b - a
         self.n_sentences = (self.data == self.eos).sum().item()
 
@@ -73,7 +84,9 @@ class StreamDataset(object):
         for i in indexes:
             a = self.bptt * i
             b = self.bptt * (i + 1)
-            yield torch.from_numpy(self.data[a:b].astype(np.int64)), self.lengths, None
+            wp = torch.from_numpy(self.word_pos[a:b].astype(np.int64)) if self.word_pos else None
+
+            yield torch.from_numpy(self.data[a:b].astype(np.int64)), self.lengths, wp
 
 
 class Dataset(object):
@@ -88,6 +101,7 @@ class Dataset(object):
 
         self.sent = sent
         self.pos = pos
+        self.word_pos = word_pos
         self.lengths = self.pos[:, 1] - self.pos[:, 0]
 
         # check number of sentences

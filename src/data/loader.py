@@ -54,7 +54,7 @@ def process_binarized(data, params):
       logger.info("data['sentences'].shape: {}".format(data['sentences'].shape))
       for positions in data['positions']:
         wp = 0
-        for cur in range(positions[0], positions[1] + 1)
+        for cur in range(positions[0], positions[1] + 1):
           data['word_positions'] = wp
           wp += dico.id2final[data['sentences'][cur]]
     else:
@@ -147,7 +147,7 @@ def load_mono_data(params, data):
                 n_batches = data['mono_stream'][lang][splt].n_batches // params.n_gpu_per_node
                 a = n_batches * params.local_rank
                 b = n_batches * params.local_rank + n_batches
-                data['mono_stream'][lang][splt].select_data(a, b)
+                data['mono_stream'][lang][splt].select_data(a, b) #TODO(prkriley): add word_pos stuff to select_data for both datasets
 
             # for denoising auto-encoding and online back-translation, we need a non-stream (batched) dataset
             if lang in params.ae_steps or lang in params.bt_src_langs or lang in params.rtt_src_langs:
