@@ -359,7 +359,7 @@ class Evaluator(object):
 
             # batch
             if lang2 is None:
-                x, lengths = batch
+                x, lengths, word_positions = batch
                 positions = None
                 langs = x.clone().fill_(lang1_id) if params.n_langs > 1 else None
             else:
@@ -370,11 +370,11 @@ class Evaluator(object):
             x, y, pred_mask = self.mask_out(x, lengths, rng)
 
             # cuda
-            x, y, pred_mask, lengths, positions, langs = to_cuda(x, y, pred_mask, lengths, positions, langs)
+            x, y, pred_mask, lengths, positions, word_positions, langs = to_cuda(x, y, pred_mask, lengths, positions, word_positions, langs)
 
             # forward / loss
             #TODO(prkriley): word_pos_emb?
-            tensor = model('fwd', x=x, lengths=lengths, positions=positions, langs=langs, causal=False)
+            tensor = model('fwd', x=x, lengths=lengths, positions=positions, word_positions=word_positions, langs=langs, causal=False)
             word_scores, loss = model('predict', tensor=tensor, pred_mask=pred_mask, y=y, get_scores=True)
 
             # update stats
