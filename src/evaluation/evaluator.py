@@ -283,11 +283,12 @@ class Evaluator(object):
 
             # batch
             if lang2 is None:
-                x, lengths = batch
+                x, lengths, word_positions = batch
                 positions = None
                 langs = x.clone().fill_(lang1_id) if params.n_langs > 1 else None
             else:
-                (sent1, len1), (sent2, len2) = batch
+                (sent1, len1), (sent2, len2) = batch #TODO(prkriley): word_pos
+                word_positions = None #TODO(prkriley): do this right
                 x, lengths, positions, langs = concat_batches(sent1, len1, lang1_id, sent2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=True)
 
             # words to predict
@@ -297,11 +298,11 @@ class Evaluator(object):
             assert pred_mask.sum().item() == y.size(0)
 
             # cuda
-            x, lengths, positions, langs, pred_mask, y = to_cuda(x, lengths, positions, langs, pred_mask, y)
+            x, lengths, positions, word_positions, langs, pred_mask, y = to_cuda(x, lengths, positions, word_positions, langs, pred_mask, y)
 
             # forward / loss
             #TODO(prkriley): word_pos_emb?
-            tensor = model('fwd', x=x, lengths=lengths, positions=positions, langs=langs, causal=True)
+            tensor = model('fwd', x=x, lengths=lengths, positions=positions, langs=langs, causal=True, word_positions=word_positions)
             word_scores, loss = model('predict', tensor=tensor, pred_mask=pred_mask, y=y, get_scores=True)
 
             # update stats
