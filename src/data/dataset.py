@@ -84,7 +84,7 @@ class StreamDataset(object):
         for i in indexes:
             a = self.bptt * i
             b = self.bptt * (i + 1)
-            wp = torch.from_numpy(self.word_pos[a:b].astype(np.int64)) if self.word_pos else None
+            wp = torch.from_numpy(self.word_pos[a:b].astype(np.int64)) if self.word_pos is not None else None
 
             yield torch.from_numpy(self.data[a:b].astype(np.int64)), self.lengths, wp
 
