@@ -141,7 +141,8 @@ class Evaluator(object):
             )
 
         for batch in iterator:
-            yield batch if lang2 is None or lang1 < lang2 else batch[::-1]
+            a,b,wp = batch
+            yield (a,b,wp) if lang2 is None or lang1 < lang2 else (b,a,wp)
 
     def create_reference_files(self):
         """
@@ -169,7 +170,7 @@ class Evaluator(object):
                 lang2_txt = []
 
                 # convert to text
-                for (sent1, len1), (sent2, len2) in self.get_iterator(data_set, lang1, lang2):
+                for (sent1, len1), (sent2, len2), _ in self.get_iterator(data_set, lang1, lang2):
                     lang1_txt.extend(convert_to_text(sent1, len1, self.dico, params))
                     lang2_txt.extend(convert_to_text(sent2, len2, self.dico, params))
 
@@ -453,7 +454,7 @@ class EncDecEvaluator(Evaluator):
         for batch in self.get_iterator(data_set, lang1, lang2):
 
             # generate batch
-            (x1, len1), (x2, len2) = batch
+            (x1, len1), (x2, len2) = batch #TODO(prkriley): word_pos
             langs1 = x1.clone().fill_(lang1_id)
             langs2 = x2.clone().fill_(lang2_id)
 
