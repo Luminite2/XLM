@@ -14,6 +14,7 @@ import torch
 
 from ..utils import to_cuda, restore_segmentation, concat_batches
 from ..model.memory import HashingMemory
+from ..model.transformer import N_MAX_POSITIONS
 
 
 BLEU_SCRIPT_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'multi-bleu.perl')
@@ -484,7 +485,7 @@ class EncDecEvaluator(Evaluator):
 
             # generate translation - translate / convert to text
             if eval_bleu:
-                max_len = int(1.5 * len1.max().item() + 10)
+                max_len = min(int(1.5 * len1.max().item() + 10), N_MAX_POSITIONS) #TODO(prkriley): clip to model max
                 if params.beam_size == 1:
                     generated, lengths = decoder.generate(enc1, len1, lang2_id, max_len=max_len)
                 else:
