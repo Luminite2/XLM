@@ -485,7 +485,7 @@ class EncDecEvaluator(Evaluator):
 
             # generate translation - translate / convert to text
             if eval_bleu:
-                max_len = min(int(1.5 * len1.max().item() + 10), N_MAX_POSITIONS) #TODO(prkriley): clip to model max
+                max_len = min(int(1.5 * len1.max().item() + 10), N_MAX_POSITIONS)
                 if params.beam_size == 1:
                     generated, lengths = decoder.generate(enc1, len1, lang2_id, max_len=max_len)
                 else:
