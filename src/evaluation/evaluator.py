@@ -141,8 +141,11 @@ class Evaluator(object):
             )
 
         for batch in iterator:
-            a,b,wp = batch
-            yield (a,b,wp) if lang2 is None or lang1 < lang2 else (b,a,wp)
+            if len(batch) == 3:
+              a,b,wp = batch
+              yield (a,b,wp) if lang2 is None or lang1 < lang2 else (b,a,wp)
+            else:
+              yield batch if lang2 is None or lang1 < lang2 else batch[::-1]
 
     def create_reference_files(self):
         """
