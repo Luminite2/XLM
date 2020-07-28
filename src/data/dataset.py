@@ -38,7 +38,7 @@ class StreamDataset(object):
         self.data = np.zeros((n_batches * bptt + 1, bs), dtype=sent.dtype) + self.eos
         self.data[1:] = buffer
 
-        if word_pos:
+        if word_pos is not None:
             wp_buffer = np.zeros(t_size, dtype=pos.dtype)
             wp_buffer[t_size - n_tokens:] = word_pos
             wp_buffer = wp_buffer.reshape((bs, n_batches * bptt)).T
@@ -71,7 +71,7 @@ class StreamDataset(object):
 
         # sub-select
         self.data = self.data[a * self.bptt:b * self.bptt]
-        if self.word_pos:
+        if self.word_pos is not None:
             self.word_pos = self.word_pos[a * self.bptt:b * self.bptt]
         self.n_batches = b - a
         self.n_sentences = (self.data == self.eos).sum().item()
@@ -84,7 +84,15 @@ class StreamDataset(object):
         for i in indexes:
             a = self.bptt * i
             b = self.bptt * (i + 1)
-            wp = torch.from_numpy(self.word_pos[a:b].astype(np.int64)) if self.word_pos is not None else None
+            wp = None
+            if self.word_pos is not None:
+              wp = self.word_pos[a:b].astype(np.int64)
+              #change word-final sentinels into actual word positions
+              wp = np.roll(wp,1,axis=0)
+              wp[0,:] = 0
+              wp = np.cumsum(wp, axis=0)
+              wp = torch.from_numpy(wp)
+
 
             yield torch.from_numpy(self.data[a:b].astype(np.int64)), self.lengths, wp
 
@@ -142,8 +150,11 @@ class Dataset(object):
         for i, s in enumerate(sentences):
             if lengths[i] > 2:  # if sentence not empty
                 sent[1:lengths[i] - 1, i].copy_(torch.from_numpy(s.astype(np.int64)))
-                if word_pos:
-                  wp[1:lengths[i] -1, i].copy_(torch.from_numpy(word_pos[i].astype(np.int64)))
+                if word_pos is not None:
+                  wp_tmp = np.roll(word_pos[i].astype(np.int64),1)
+                  wp_tmp[0] = 0
+                  wp_tmp = np.cumsum(wp_tmp)
+                  wp[1:lengths[i] -1, i].copy_(torch.from_numpy(wp_tmp))
                   #TODO(prkriley): determine whether bos/eos need positions
             sent[lengths[i] - 1, i] = self.eos_index
 
@@ -208,7 +219,7 @@ class Dataset(object):
                 sentence_ids = sentence_ids[:self.max_batch_size]
             pos = self.pos[sentence_ids]
             sent = [self.sent[a:b] for a, b in pos] #TODO(prkriley): maybe index b doesn't need to have word_pos set? in loader.py
-            wp = [self.word_pos[a:b] for a, b in pos] if self.word_pos else None
+            wp = [self.word_pos[a:b] for a, b in pos] if self.word_pos is not None else None
             sent = self.batch_sentences(sent, word_pos=wp)
             yield (sent, sentence_ids) if return_indices else sent
 

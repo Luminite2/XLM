@@ -481,17 +481,16 @@ class Trainer(object):
         lang2_id = params.lang2id[lang2] if lang2 is not None else None
 
         if lang2 is None:
-            x, lengths, word_positions = self.get_batch(name, lang1, stream=True) #word_pos is in there too, at end
-            #TODO(prkriley): stream!!!!
+            x, lengths, word_positions = self.get_batch(name, lang1, stream=True)
             positions = None
             langs = x.clone().fill_(lang1_id) if params.n_langs > 1 else None
-            #TODO(prkriley): pos is none... probably because it's easy, but word_pos isn't, so it should be done properly
         elif lang1 == lang2:
             (x1, len1, wp1) = self.get_batch(name, lang1)
             (x2, len2, wp2) = (x1, len1, wp1)
             (x1, len1, wp1) = self.add_noise(x1, len1, wp1) #TODO(prkriley): decide what to do with noise and word_pos
             x, lengths, positions, langs = concat_batches(x1, len1, lang1_id, x2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=False)
             #TODO(prkriley): word_pos is gonna require some code reading; see how result is used, and how concat works too
+            #TODO(prkriley): this branch seems unused
         else:
             (x1, len1), (x2, len2) = self.get_batch(name, lang1, lang2)
             x, lengths, positions, langs = concat_batches(x1, len1, lang1_id, x2, len2, lang2_id, params.pad_index, params.eos_index, reset_positions=True)
@@ -719,8 +718,6 @@ class Trainer(object):
 
         # generate batch / select words to predict
         x, lengths, positions, word_positions, langs, _ = self.generate_batch(lang1, lang2, 'pred')
-        #TODO(prkriley): word_positions could go here and be carried through
-        #TODO(prkriley): OR dynamically calculate at use time
         x, lengths, positions, word_positions, langs, _ = self.round_batch(x, lengths, positions, word_positions, langs)
         x, y, pred_mask = self.mask_out(x, lengths)
 
@@ -900,7 +897,7 @@ class EncDecTrainer(Trainer):
         lang2_id = params.lang2id[lang2]
 
         # generate source batch
-        x1, len1, wp1 = self.get_batch('bt', lang1) #TODO(prkriley): word_pos?
+        x1, len1, wp1 = self.get_batch('bt', lang1)
         langs1 = x1.clone().fill_(lang1_id)
 
         # cuda

@@ -68,6 +68,17 @@ def create_sinusoidal_embeddings(n_pos, dim, out):
     out.requires_grad = False
 
 
+def create_reversed_sinusoidal_embeddings(n_pos, dim, out):
+      position_enc = np.array([
+        [pos / np.power(10000, 2 * (j // 2) / dim) for j in range(dim)]
+        for pos in range(n_pos)
+      ])
+      out[:, 0::2] = torch.FloatTensor(np.sin(position_enc[:, 0::2][:,::-1]))
+      out[:, 1::2] = torch.FloatTensor(np.cos(position_enc[:, 1::2][:,::-1]))
+      out.detach_()
+      out.requires_grad = False
+
+
 def gelu(x):
     """
     GELU activation
@@ -281,7 +292,7 @@ class TransformerModel(nn.Module):
         if params.sinusoidal_embeddings:
             create_sinusoidal_embeddings(N_MAX_POSITIONS, self.dim, out=self.position_embeddings.weight)
             if self.use_word_pos_emb:
-                create_sinusoidal_embeddings(N_MAX_POSITIONS, self.dim, out=self.word_position_embeddings.weight)
+                create_reversed_sinusoidal_embeddings(N_MAX_POSITIONS, self.dim, out=self.word_position_embeddings.weight)
         if params.n_langs > 1 and self.use_lang_emb:
             self.lang_embeddings = Embedding(self.n_langs, self.dim)
         self.embeddings = Embedding(self.n_words, self.dim, padding_idx=self.pad_index)
@@ -520,7 +531,7 @@ class TransformerModel(nn.Module):
                 src_enc=src_enc,
                 src_len=src_len,
                 cache=cache,
-                word_positions=word_positions[:cur_len] if word_positions else None
+                word_positions=word_positions[:cur_len] if word_positions is not None else None
             )
             assert tensor.size() == (1, bs, self.dim), (cur_len, max_len, src_enc.size(), tensor.size(), (1, bs, self.dim))
             tensor = tensor.data[-1, :, :].type_as(src_enc)  # (bs, dim)
@@ -536,7 +547,7 @@ class TransformerModel(nn.Module):
             # update generations / lengths / finished sentences / current length
             generated[cur_len] = next_words * unfinished_sents + self.pad_index * (1 - unfinished_sents)
             #TODO(prkriley): update word_pos here using self.dico
-            if word_positions:
+            if word_positions is not None:
               word_finals = self.dico.finals_mask(next_words)
               word_positions[cur_len] = word_positions[cur_len-1] + word_finals
             gen_len.add_(unfinished_sents)
@@ -555,7 +566,7 @@ class TransformerModel(nn.Module):
         # sanity check
         assert (generated == self.eos_index).sum() == 2 * bs
 
-        return generated[:cur_len], gen_len, word_positions[:cur_len]
+        return generated[:cur_len], gen_len, word_positions[:cur_len] if word_positions is not None else None
 
     def generate_beam(self, src_enc, src_len, tgt_lang_id, beam_size, length_penalty, early_stopping, max_len=200):
         """

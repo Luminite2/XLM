@@ -173,9 +173,12 @@ class Evaluator(object):
                 lang2_txt = []
 
                 # convert to text
-                for (sent1, len1), (sent2, len2), _ in self.get_iterator(data_set, lang1, lang2):
-                    lang1_txt.extend(convert_to_text(sent1, len1, self.dico, params))
-                    lang2_txt.extend(convert_to_text(sent2, len2, self.dico, params))
+                for iterator_val1, iterator_val2 in self.get_iterator(data_set, lang1, lang2):
+                  (sent1, len1) = iterator_val1[:2]
+                  (sent2, len2) = iterator_val2[:2]
+
+                  lang1_txt.extend(convert_to_text(sent1, len1, self.dico, params))
+                  lang2_txt.extend(convert_to_text(sent2, len2, self.dico, params))
 
                 # replace <unk> by <<unk>> as these tokens cannot be counted in BLEU
                 lang1_txt = [x.replace('<unk>', '<<unk>>') for x in lang1_txt]
@@ -457,7 +460,7 @@ class EncDecEvaluator(Evaluator):
         for batch in self.get_iterator(data_set, lang1, lang2):
 
             # generate batch
-            (x1, len1), (x2, len2) = batch #TODO(prkriley): word_pos
+            (x1, len1, wp1), (x2, len2, _) = batch
             langs1 = x1.clone().fill_(lang1_id)
             langs2 = x2.clone().fill_(lang2_id)
 
@@ -468,10 +471,10 @@ class EncDecEvaluator(Evaluator):
             assert len(y) == (len2 - 1).sum().item()
 
             # cuda
-            x1, len1, langs1, x2, len2, langs2, y = to_cuda(x1, len1, langs1, x2, len2, langs2, y)
+            x1, len1, langs1, wp1, x2, len2, langs2, y = to_cuda(x1, len1, langs1, wp1, x2, len2, langs2, y)
 
             # encode source sentence
-            enc1 = encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            enc1 = encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, word_positions=wp1)
             enc1 = enc1.transpose(0, 1)
             enc1 = enc1.half() if params.fp16 else enc1
 
@@ -493,7 +496,7 @@ class EncDecEvaluator(Evaluator):
             if eval_bleu:
                 max_len = int(1.5 * len1.max().item() + 10)
                 if params.beam_size == 1:
-                    generated, lengths = decoder.generate(enc1, len1, lang2_id, max_len=max_len)
+                    generated, lengths, _ = decoder.generate(enc1, len1, lang2_id, max_len=max_len)
                 else:
                     generated, lengths = decoder.generate_beam(
                         enc1, len1, lang2_id, beam_size=params.beam_size,

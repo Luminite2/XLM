@@ -160,35 +160,9 @@ class Dictionary(object):
       return self._torch_id2final
 
     def finals_mask(self, x):
-      if len(x.shape) == 2:
-        return self._finals_mask_2d(x)
-      else:
-        return self._finals_mask_1d(x)
-
-    def _finals_mask_1d(self, x):
-      bs, = x.shape
-      batch_ids = torch.arange(bs)
-      sparse_onehot_x_indices = torch.stack(x.flatten(), batch_ids.flatten())
-      sparse_onehot_x = torch.sparse.LongTensor(sparse_onehot_x_indices, torch.ones(bs), size=(len(self),bs))
-      num_finals = self.torch_final_ids.shape[0]
-      sparse_onehot_finals_indices = torch.stack(self.torch_final_ids.repeat(bs), batch_ids.unsqueeze(-1).repeat(1,num_finals).flatten())
-      sparse_onehot_finals = torch.sparse.LongTensor(sparse_onehot_finals_indices, torch.ones(sparse_onehot_finals_indices.shape[1]), size=sparse_onehot_x.shape)
-      x_finals_mask = torch.sparse.sum(sparse_onehot_x * sparse_onehot_finals, dim=0).to_dense()
-      return x_finals_mask
-
-    def _finals_mask_2d(self, x):
-      slen,bs = x.shape
-      positions = torch.arange(slen).unsqueeze(-1).expand(slen,bs)
-      batch_ids = torch.arange(bs).unsqueeze(0).expand(slen,bs)
-      sparse_onehot_x_indices = torch.stack(x.flatten(), positions.flatten(), batch_ids.flatten())
-      #TODO(prkriley): probably need to cuda()-fy some of these
-      sparse_onehot_x = torch.sparse.LongTensor(sparse_onehot_x_indices, torch.ones(slen*bs), size=(len(self),slen,bs))
-      num_finals = self.torch_final_ids.shape[0]
-      sparse_onehot_finals_indices = torch.stack((self.torch_final_ids.repeat(slen*bs), torch.arange(slen).unsqueeze(-1).repeat(1,num_finals).repeat(bs,1).flatten(), batch_ids.T.repeat(1,num_finals).flatten()))
-      sparse_onehot_finals = torch.sparse.LongTensor(sparse_onehot_finals_indices, torch.ones(sparse_onehot_finals_indices.shape[1]), size=sparse_onehot_x.shape)
-      x_finals_mask = torch.sparse.sum(sparse_onehot_x * sparse_onehot_finals, dim=0).to_dense()
-      return x_finals_mask
-    
+      shape = x.shape
+      return torch.reshape(torch.gather(self.torch_id2final.to(x), 0, torch.flatten(x)), shape)
+   
     def word_positions(self, x):
       x_finals_mask = self.finals_mask(x)
       x_initials_mask = x_finals_mask.roll(1,0)

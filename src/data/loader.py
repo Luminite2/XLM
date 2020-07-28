@@ -48,15 +48,11 @@ def process_binarized(data, params):
     if (data['sentences'].dtype == np.int32) and (len(dico) < 1 << 16):
         logger.info("Less than 65536 words. Moving data from int32 to uint16 ...")
         data['sentences'] = data['sentences'].astype(np.uint16)
-    #TODO(prkriley): make data['word_positions']
     if params.word_position_embeddings:
       data['word_positions'] = np.zeros(len(data['sentences']), dtype=data['positions'].dtype)
-      logger.info("data['sentences'].shape: {}".format(data['sentences'].shape))
       for positions in data['positions']:
-        wp = 0
         for cur in range(positions[0], positions[1] + 1):
-          data['word_positions'] = wp
-          wp += dico.id2final[data['sentences'][cur]]
+          data['word_positions'][cur] = dico.id2final[data['sentences'][cur]] #TODO(prkriley): rename vars because this is finality, not word_pos
     else:
       data['word_positions'] = None
 
