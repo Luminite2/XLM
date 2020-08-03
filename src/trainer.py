@@ -844,7 +844,7 @@ class EncDecTrainer(Trainer):
             (x1, len1, wp1) = self.get_batch('ae', lang1)
             (x2, len2, wp2) = (x1, len1, wp1)
             (x1, len1) = self.add_noise(x1, len1) #TODO(pr): think of a way to swap this out with RTT noise
-            wp1 = self.data['dico'].word_positions(x1)
+            wp1 = self.data['dico'].word_positions(x1) if wp1 is not None else None
         else:
             (x1, len1), (x2, len2) = self.get_batch('mt', lang1, lang2)
             wp1 = None
@@ -1148,7 +1148,7 @@ class EncDecTrainer(Trainer):
             for i in range(noised_lens.size(0)):
               noised_x1[:noised_lens[i], i].copy_(torch.LongTensor(sentences[i]))
             noised_x1 = noised_x1.cuda()
-            noised_wp1 = self.data['dico'].word_positions(noised_x1)
+            noised_wp1 = self.data['dico'].word_positions(noised_x1) if wp1 is not None else None
 
             if log_in_out:
               print('DEBUG: noised_x1[:,{}]: {}'.format(selected_sentence,[self.data['dico'].id2word[noised_x1[i,selected_sentence].item()] for i in range(noised_x1.size(0))]))
