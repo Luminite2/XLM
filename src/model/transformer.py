@@ -412,8 +412,6 @@ class TransformerModel(nn.Module):
         tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
         if langs is not None and self.use_lang_emb:
             tensor = tensor + self.lang_embeddings(langs)
-        #TODO(prkriley): this is where you would add something else (like a word-wise positional embedding)
-        #TODO(prkriley): to do dynamically, need a pos->wpos function, which I THINK requires knowing which tokens are word-final (not pos->wpos, but idxs->wpos)
         if self.use_word_pos_emb:
           tensor = tensor + self.word_position_embeddings(word_positions).expand_as(tensor)
         tensor = self.layer_norm_emb(tensor)
